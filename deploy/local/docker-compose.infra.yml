@@ -1,0 +1,49 @@
+# 仅启动本机回环上的 MongoDB、Redis、RustFS。
+# 口令由 start-local.sh 生成后通过环境变量传入，不要把口令写进本文件。
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: aitoearn-mongodb
+    ports:
+      - "127.0.0.1:27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+    entrypoint:
+      - bash
+      - -c
+      - |
+        openssl rand -base64 756 > /data/mongodb-keyfile
+        chmod 400 /data/mongodb-keyfile
+        chown 999:999 /data/mongodb-keyfile
+        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /data/mongodb-keyfile --bind_ip_all
+    volumes:
+      - mongodb-data:/data/db
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: aitoearn-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: aitoearn-rustfs
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY}
+    volumes:
+      - rustfs-data:/data
+
+volumes:
+  mongodb-data:
+  rustfs-data:
