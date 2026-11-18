@@ -246,9 +246,10 @@ export async function startApplication(Module: Type<unknown>, config: BaseConfig
   })
 
   await app.startAllMicroservices()
-  await app.listen(config.port, () => {
-    logger.log(`app started at port ${config.port}`)
+  const host = process.env['BIND_HOST'] || '0.0.0.0'
+  await app.listen(config.port, host, () => {
+    logger.log(`app started at ${host}:${config.port}`)
     if (config.openapi?.enable)
-      logger.log(`swagger docs: http://localhost:${config.port}${config.openapi.path}`)
+      logger.log(`swagger docs: http://${host}:${config.port}${config.openapi.path}`)
   })
 }

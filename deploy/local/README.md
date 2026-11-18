@@ -1,49 +1,44 @@
 # 本机隔离运行
 
-这些文件用来在一台自己的机器上启动已验证的依赖，并检查草稿和“只有发布记录、没有进入队列”。不要把 `deploy/local/.runtime/` 提交到 git。
-
-## 准备
-
-- Docker、Node.js 22、pnpm 10.33
-- `/etc/hosts` 增加一行：`127.0.0.1 rustfs.local`
-- 在仓库根目录执行：
+单一入口是 `deploy/local/aitoearnctl.sh`。口令、登录令牌、pid 和日志只写入 `deploy/local/.runtime/`，该目录已在 `.gitignore`。
 
 ```bash
-bash deploy/local/start-local.sh
+bash deploy/local/aitoearnctl.sh start
+bash deploy/local/aitoearnctl.sh status
+bash deploy/local/aitoearnctl.sh check
+bash deploy/local/aitoearnctl.sh restart
+bash deploy/local/aitoearnctl.sh stop
+bash deploy/local/aitoearnctl.sh stop --all
 ```
 
-脚本会在 `deploy/local/.runtime/secrets.env` 生成口令，拉起只监听 `127.0.0.1` 的 MongoDB 7.0、Redis 7.4 和 RustFS，并写出 git 忽略的：
+`start` 拉起 MongoDB、Redis、RustFS、server、ai、本机代理和网页。`restart` 先停应用再启动，默认保留数据库卷。`stop --all` 才停止容器，不删除卷。
 
-- `project/aitoearn-backend/apps/aitoearn-server/config/local.config.yaml`
-- `project/aitoearn-backend/apps/aitoearn-ai/config/local.config.yaml`
+前提：Docker、Node.js 22、pnpm 10.33，以及 `/etc/hosts` 中的 `127.0.0.1 rustfs.local`。第一次启动会生成 `secrets.env`。已有数据卷时不要换掉其中的数据库口令。
 
-然后按脚本打印的命令启动两个后端。健康检查：
+网页地址是 `http://127.0.0.1:6061/zh-CN`。`AUTO_LOGIN_TOKEN` 只是本地进程环境里的合成登录，不是邮箱、短信或平台身份验证。代理 `127.0.0.1:7080` 把 `/ai`、`/agent` 转到 3010，其余转到 3002。四个应用端口都绑定 `127.0.0.1`。
 
-- `curl http://127.0.0.1:3002/health`
-- `curl http://127.0.0.1:3010/health`
+已构建的 server/ai 用 `node dist/apps/<app>/src/main.js` 启动，并通过 `register-dist.cjs` 把 `@yikart/*` 指到 `dist/libs`。没有构建产物时才退回 `nx serve`。网页优先使用 `.next/standalone`。
 
-## 验证
+`check` 确认标题为「页面合成草稿」的记录仍在，封面对象可以下载，并且 API 列表还能读到它。
 
-```bash
-node deploy/local/verify-local.mjs deploy/local/.runtime
-```
+## 本次实测资源
 
-断言包括服务健康、上传、草稿读写，以及一条 7 天后的抖音发布记录。记录状态必须是等待发布，Redis 里不能出现对应的 `publish-<任务ID>`。这只证明排期落库，不代表发布队列或平台发布成功。
+生产形态常驻大约：server 304MB、ai 238MB、网页 97MB、代理 56MB、MongoDB 183MB、RustFS 125MB、Redis 10MB。合计约 1.1GB RSS。空闲时容器 CPU 低于 1%。启动约 10 秒，启动期间可用内存比启动前少约 700MB。
 
-## 网页
+开发形态的 `nx serve` 加 `next dev` 曾到约 7GB RSS，不适合内存余量只有 2GB 的机器。
 
-后端起来之后：
+磁盘：Mongo 镜像 1.19GB、RustFS 镜像 488MB、Redis 镜像 58MB，数据卷约 305MB。后端 `node_modules` 985MB，网页 `node_modules` 872MB，standalone 171MB。`nx build` 的 dist 只有 12MB，仍要依赖这份 `node_modules`，不能单独拷走运行。没有构建或上传公共镜像。
 
-```bash
-bash deploy/local/start-local.sh --web
-```
+## 依赖边界
 
-浏览器打开 `http://127.0.0.1:6061/zh-CN`。`AUTO_LOGIN_TOKEN` 只放在该进程环境里，用来调用网页已有的自动登录。邮箱验证码登录在这个开源后端里没有对应接口。
+可以自己完成、且不调用收费接口：基础设施、素材上传、草稿读写、健康检查、平台目录、B站授权 URL 的本地拼接、未来时间的发布记录落库。
 
-代理 `deploy/local/api-proxy.mjs` 监听 `127.0.0.1:7080`：`/ai` 和 `/agent` 转到 3010，其余转到 3002。
+必须由使用者向平台申请或授权后才能继续，仓库不包含这些密钥：
 
-## 不要做的事
+- 抖音：开放平台 `clientId`/`clientSecret` 和小程序 `miniApp`。授权会请求 `open.douyin.com`。默认配置是 `hidden`。
+- B站：开放平台 `clientId`/`clientSecret`。真正换票和投稿访问 `api.bilibili.com`、`member.bilibili.com`。
+- 小红书：浏览器插件和已登录的创作者站才能发笔记。服务端只绑定作品链接。线下分享签名需要 `appKey`/`appSecret`，地址是 `edith.xiaohongshu.com`。
+- AI 生成和 Agent：`ai.openai`、`ai.gemini`、`ai.anthropic`、`ai.volcengine`、`ai.grok`、`ai.dashscope` 或 `ai.relay` 的密钥。空密钥可以启动并返回模型目录，不能生成。
+- 官方 Relay：`relay.apiKey` 配 `aitoearn.cn` 或 `aitoearn.ai`。本地配置会删掉 `relay`，避免空密钥也被转到官方。
 
-- 不要填写真实社媒密钥后点击授权或发布。
-- 不要调用模型生成。本地配置保留空的模型密钥，并去掉 `relay`，避免授权被转到 `aitoearn.ai`。
-- 根目录 `docker-compose.yml` 仍包含官方应用镜像；本目录只覆盖已经在本机跑通的数据库、队列和对象存储。
+没有任务市场、钱包或结算服务。不要把合成登录当成真实账号验证，也不要在没有平台授权时点击发布。
